@@ -241,11 +241,12 @@ jobs:
     name: "Notify on failure"
     runs-on: ["ubuntu-22.04"]
     needs: [build-info, build-ci-images, generate-constraints, update-constraints]
-    if: failure() && secrets.SLACK_BOT_TOKEN != ''
+    if: failure()
     env:
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
     steps:
       - name: "Send Slack notification"
+        if: env.SLACK_BOT_TOKEN != ''
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c  # v3.0.3
         with:
           method: chat.postMessage
