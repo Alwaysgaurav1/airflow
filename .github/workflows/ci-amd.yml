@@ -1201,7 +1201,7 @@ jobs:
           retention-days: 7
           overwrite: true
       - name: "Notify Slack (new/changed failures)"
-        if: steps.notification.outputs.action == 'notify_new'
+        if: steps.notification.outputs.action == 'notify_new' && env.SLACK_BOT_TOKEN != ''
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c  # v3.0.3
         with:
           method: chat.postMessage
@@ -1217,7 +1217,7 @@ jobs:
                   text: "🚨 Failure Alert: Scheduled CI (${{ needs.build-info.outputs.platform }}) on *${{ github.ref_name }}*\n\nFailing jobs:\n${{ steps.get-failures.outputs.failed-jobs }}\n\n*Details:* <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|View the failure log>"
           # yamllint enable rule:line-length
       - name: "Notify Slack (still not fixed)"
-        if: steps.notification.outputs.action == 'notify_reminder'
+        if: steps.notification.outputs.action == 'notify_reminder' && env.SLACK_BOT_TOKEN != ''
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c  # v3.0.3
         with:
           method: chat.postMessage
@@ -1233,7 +1233,7 @@ jobs:
                   text: "🚨🔁 Still not fixed: Scheduled CI (${{ needs.build-info.outputs.platform }}) on *${{ github.ref_name }}*\n\nFailing jobs:\n${{ steps.get-failures.outputs.failed-jobs }}\n\n*Details:* <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|View the failure log>"
           # yamllint enable rule:line-length
       - name: "Notify Slack (all tests passing)"
-        if: steps.notification.outputs.action == 'notify_recovery'
+        if: steps.notification.outputs.action == 'notify_recovery' && env.SLACK_BOT_TOKEN != ''
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c  # v3.0.3
         with:
           method: chat.postMessage
