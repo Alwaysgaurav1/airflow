@@ -109,11 +109,13 @@ jobs:
       - name: "Check if constraints branch exists"
         id: check-branch
         run: |
-          if git ls-remote --exit-code --heads origin "${{ steps.constraints-branch.outputs.branch }}"; then
+          if git ls-remote --exit-code --heads origin "${BRANCH}"; then
             echo "exists=true" >> ${GITHUB_OUTPUT}
           else
             echo "exists=false" >> ${GITHUB_OUTPUT}
           fi
+        env:
+          BRANCH: ${{ steps.constraints-branch.outputs.branch }}
       - name: Checkout ${{ steps.constraints-branch.outputs.branch }}
         if: steps.check-branch.outputs.exists == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
