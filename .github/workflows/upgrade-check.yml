@@ -101,7 +101,7 @@ jobs:
           echo "pr-url=${PR_URL}" >> "${GITHUB_OUTPUT}"
       - name: >-
           [${{ inputs.target-branch }}] Notify Slack on success
-        if: success() && steps.find-pr.outputs.pr-url != ''
+        if: success() && steps.find-pr.outputs.pr-url != '' && env.SLACK_BOT_TOKEN != ''
         uses: >-
           slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c
         with:
@@ -130,7 +130,7 @@ jobs:
                     <${{ steps.find-pr.outputs.pr-url }}|View PR>
       - name: >-
           [${{ inputs.target-branch }}] Notify Slack on failure
-        if: failure()
+        if: failure() && env.SLACK_BOT_TOKEN != ''
         uses: >-
           slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c
         with:

@@ -54,7 +54,7 @@ jobs:
           OUTPUT_FILE: "slack-message.json"
 
       - name: "Post report to Slack"
-        if: always() && steps.analyze.outcome == 'success'
+        if: always() && steps.analyze.outcome == 'success' && env.SLACK_BOT_TOKEN != ''
         uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c  # v3.0.3
         with:
           method: chat.postMessage
