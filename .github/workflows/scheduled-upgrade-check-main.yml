@@ -27,6 +27,7 @@ permissions:
   pull-requests: write
 jobs:
   upgrade-main:
+    if: github.repository == 'apache/airflow'
     name: "[main] Upgrade"
     uses: ./.github/workflows/upgrade-check.yml
     with:

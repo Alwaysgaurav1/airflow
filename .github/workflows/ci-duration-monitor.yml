@@ -33,6 +33,7 @@ env:
 jobs:
 
   monitor-ci-durations:
+    if: github.repository == 'apache/airflow'
     name: "Monitor CI durations on main"
     runs-on: ubuntu-latest
     steps:
