@@ -24,7 +24,7 @@ import logging
 import math
 import warnings
 from collections import defaultdict
-from collections.abc import Collection, Iterable
+from collections.abc import Callable, Collection, Iterable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, NamedTuple
 from urllib.parse import quote
@@ -100,7 +100,6 @@ from airflow.task.priority_strategy import validate_and_load_priority_weight_str
 from airflow.ti_deps.dep_context import DepContext
 from airflow.ti_deps.dependencies_deps import REQUEUEABLE_DEPS, RUNNING_DEPS
 from airflow.ti_deps.deps.ready_to_reschedule import ReadyToRescheduleDep
-from airflow.utils.helpers import prune_dict
 from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow.utils.net import get_hostname
 from airflow.utils.platform import getuser
@@ -200,6 +199,27 @@ def _stop_remaining_tasks(*, task_instance: TaskInstance, task_teardown_map=None
                 ti.set_state(state=TaskInstanceState.SKIPPED, session=session)
         else:
             log.info("Not skipping teardown task '%s'", ti.task_id)
+
+
+def _add_and_prime_mapped_ti(
+    ti: TaskInstance,
+    task: Operator,
+    dag_run: DagRun,
+    *,
+    session: Session,
+    context_carrier: dict | None = None,
+) -> None:
+    """
+    Attach a newly-created mapped TI to the session and prime its ``dag_run`` cache.
+
+    :meta private:
+    """
+    task_instance_mutation_hook(ti, dag_run=dag_run)
+    session.add(ti)
+    if context_carrier is not None:
+        ti.context_carrier = context_carrier
+    ti.refresh_from_task(task, dag_run=dag_run)
+    set_committed_value(ti, "dag_run", dag_run)
 
 
 def _recalculate_dagrun_queued_at_deadlines(
@@ -409,6 +429,7 @@ def clear_task_instances(
         from airflow.models.dagrun import (  # Avoid circular import
             DagRun,
             dagrun_trace_attributes,
+            parent_trace_context,
             trace_sampled_override,
         )
 
@@ -435,6 +456,7 @@ def clear_task_instances(
                 task_span_detail_level=dr.conf.get(TASK_SPAN_DETAIL_LEVEL_KEY) if dr.conf else None,
                 attributes=dagrun_trace_attributes(dr),
                 force_sampled=trace_sampled_override(dr.conf),
+                parent_context=parent_trace_context(dr.conf),
             )
 
             _recalculate_dagrun_queued_at_deadlines(dr, dr.queued_at, session)
@@ -673,6 +695,7 @@ class TaskInstance(Base, LoggingMixin, BaseWorkload):
 
     run_after = association_proxy("dag_run", "run_after")
     logical_date = association_proxy("dag_run", "logical_date")
+    team_name = association_proxy("dag_run", "team_name")
     task_instance_note = relationship(
         "TaskInstanceNote",
         back_populates="task_instance",
@@ -734,9 +757,8 @@ class TaskInstance(Base, LoggingMixin, BaseWorkload):
     @property
     def stats_tags(self) -> dict[str, str]:
         """Returns task instance tags."""
-        return prune_dict(
-            {"dag_id": self.dag_id, "task_id": self.task_id, "team_name": getattr(self, "_team_name", None)}
-        )
+        # Reuse the dag run's tags and add the task-level ones.
+        return {**self.dag_run.stats_tags, "task_id": self.task_id}
 
     @staticmethod
     def insert_mapping(
@@ -1525,14 +1547,14 @@ class TaskInstance(Base, LoggingMixin, BaseWorkload):
         outlet_events: list[dict[str, Any]],
         *,
         session: Session = NEW_SESSION,
-    ) -> None:
+    ) -> Sequence[Callable[[], None]]:
         # Fast path: a task with no outlets and no outlet events has nothing to
         # register. Returning early avoids the AssetModel lookup below (which
         # would run with empty IN () clauses) and all downstream work. This is
         # the common case -- most tasks declare no outlets -- and it sits on the
         # task-success path that gates scheduling the next task.
         if not task_outlets and not outlet_events:
-            return
+            return ()
 
         from airflow.serialization.definitions.assets import (
             SerializedAsset,
@@ -1558,6 +1580,7 @@ class TaskInstance(Base, LoggingMixin, BaseWorkload):
         dag_run_partition_key = ti.dag_run.partition_key
         dag_run_partition_date = ti.dag_run.partition_date
 
+        callback_sink: list[Callable[[], None]] = []
         asset_keys = {
             SerializedAssetUniqueKey(o.name, o.uri)
             for o in task_outlets
@@ -1593,6 +1616,7 @@ class TaskInstance(Base, LoggingMixin, BaseWorkload):
                     extra=None,
                     partition_key=dag_run_partition_key,
                     partition_date=dag_run_partition_date,
+                    callback_sink=callback_sink,
                     session=session,
                 )
                 return
@@ -1620,6 +1644,7 @@ class TaskInstance(Base, LoggingMixin, BaseWorkload):
                     extra=payload.extra,
                     partition_key=effective_pk,
                     partition_date=payload_partition_date,
+                    callback_sink=callback_sink,
                     session=session,
                 )
 
@@ -1704,6 +1729,7 @@ class TaskInstance(Base, LoggingMixin, BaseWorkload):
                     extra=asset_event_extra,
                     partition_key=dag_run_partition_key,
                     partition_date=dag_run_partition_date,
+                    callback_sink=callback_sink,
                     session=session,
                 )
                 if event is None:
@@ -1717,8 +1743,11 @@ class TaskInstance(Base, LoggingMixin, BaseWorkload):
                         extra=asset_event_extra,
                         partition_key=dag_run_partition_key,
                         partition_date=dag_run_partition_date,
+                        callback_sink=callback_sink,
                         session=session,
                     )
+
+        return callback_sink
 
     @provide_session
     def update_rtif(self, rendered_fields, *, session: Session = NEW_SESSION):

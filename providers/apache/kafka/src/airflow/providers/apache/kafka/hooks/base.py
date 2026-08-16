@@ -22,7 +22,12 @@ from typing import Any
 
 from confluent_kafka.admin import AdminClient
 
+from airflow.providers.common.compat.module_loading import import_string
 from airflow.providers.common.compat.sdk import BaseHook
+
+# librdkafka config options whose values are callables. They can be provided as dotted-path
+# strings on the connection extra and are resolved to callables before the client is built.
+CALLBACK_CONFIG_KEYS = ("error_cb", "throttle_cb", "stats_cb", "log_cb", "oauth_cb", "on_commit")
 
 # Amazon MSK bootstrap servers follow a predictable naming scheme, e.g.
 #   b-1.demo.abcde1.c2.kafka.us-east-1.amazonaws.com:9098            (provisioned)
@@ -85,10 +90,24 @@ class KafkaBaseHook(BaseHook):
     def _get_client(self, config) -> Any:
         return AdminClient(config)
 
-    @cached_property
-    def get_conn(self) -> Any:
-        """Get the configuration object."""
+    def _resolve_callbacks(self, config: dict[str, Any]) -> None:
+        """Resolve callback options provided as dotted-path strings into callables."""
+        for key in CALLBACK_CONFIG_KEYS:
+            value = config.get(key)
+            if isinstance(value, str):
+                config[key] = import_string(value)
+
+    def _build_config(self) -> dict[str, Any]:
+        """
+        Build the confluent-kafka configuration for this connection.
+
+        Resolves callback options provided as dotted-path strings and injects the
+        managed OAuth token callback (Google Managed Kafka or Amazon MSK IAM) when
+        applicable, so that establishing a connection and testing it always use an
+        identical configuration.
+        """
         config = self.get_connection(self.kafka_config_id).extra_dejson
+        self._resolve_callbacks(config)
 
         if not (config.get("bootstrap.servers", None)):
             raise ValueError("config['bootstrap.servers'] must be provided.")
@@ -114,7 +133,12 @@ class KafkaBaseHook(BaseHook):
             config.update({"oauth_cb": token})
         else:
             self._maybe_add_msk_iam_oauth(config, bootstrap_servers)
-        return self._get_client(config)
+        return config
+
+    @cached_property
+    def get_conn(self) -> Any:
+        """Get the configuration object."""
+        return self._get_client(self._build_config())
 
     def _maybe_add_msk_iam_oauth(self, config: dict[str, Any], bootstrap_servers: str | None) -> None:
         """
@@ -159,7 +183,10 @@ class KafkaBaseHook(BaseHook):
     def test_connection(self) -> tuple[bool, str]:
         """Test Connectivity from the UI."""
         try:
-            config = self.get_connection(self.kafka_config_id).extra_dejson
+            # Build the config exactly as a real connection would, so resolved
+            # dotted-path callbacks and the managed OAuth token callback (Google
+            # Managed Kafka or Amazon MSK IAM) are exercised by the UI test too.
+            config = self._build_config()
             t = AdminClient(config).list_topics(timeout=10)
             if t:
                 return True, "Connection successful."

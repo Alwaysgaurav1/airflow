@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { Button, Field, Heading, HStack, Text, VStack } from "@chakra-ui/react";
+import { Button, Field, Heading, HStack, Input, Text, VStack } from "@chakra-ui/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -25,6 +25,7 @@ import { FiPlay } from "react-icons/fi";
 import {
   useAssetServiceCreateAssetEvent,
   UseAssetServiceGetAssetEventsKeyFn,
+  useAssetServiceGetAssetsUiKey,
   useAssetServiceMaterializeAsset,
   UseDagRunServiceGetDagRunsKeyFn,
   useDagServiceGetDagDetails,
@@ -45,6 +46,7 @@ import TriggerDAGForm from "src/components/TriggerDag/TriggerDAGForm";
 import type { DagRunTriggerParams } from "src/components/TriggerDag/types";
 import { Dialog, toaster } from "src/components/ui";
 import { RadioCardItem, RadioCardRoot } from "src/components/ui/RadioCard";
+import { toNullablePartitionKey } from "src/utils";
 
 type Props = {
   readonly asset: AssetResponse;
@@ -71,32 +73,18 @@ export const CreateAssetEventModal = ({ asset, onClose, open }: Props) => {
   const [upstreamDag] = upstreamDags;
   const upstreamDagId = hasUpstreamDag ? upstreamDag?.source_id.replace("dag:", "") : undefined;
 
-  // TODO move validate + prettify into JsonEditor
-  const validateAndPrettifyJson = (newValue: string) => {
-    try {
-      const parsedJson = JSON.parse(newValue) as JSON;
-
-      setExtraError(undefined);
-
-      const formattedJson = JSON.stringify(parsedJson, undefined, 2);
-
-      if (formattedJson !== extra) {
-        setExtra(formattedJson); // Update only if the value is different
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : translate("common:error.unknown");
-
-      setExtraError(errorMessage);
-    }
-  };
-
   const onSuccess = async (response: AssetEventResponse | DAGRunResponse) => {
     setExtra("{}");
     setExtraError(undefined);
     setPartitionKey(undefined);
     onClose();
 
-    let queryKeys = [UseAssetServiceGetAssetEventsKeyFn({ assetId: asset.id }, [{ assetId: asset.id }])];
+    let queryKeys = [
+      UseAssetServiceGetAssetEventsKeyFn({ assetId: asset.id }, [{ assetId: asset.id }]),
+      // The Assets list defaults to sorting by last asset event, so a new event changes both the
+      // displayed timestamp and the row's position; refresh it for manual events and materializes.
+      [useAssetServiceGetAssetsUiKey],
+    ];
 
     if ("dag_run_id" in response) {
       const dagId = response.dag_id;
@@ -158,7 +146,7 @@ export const CreateAssetEventModal = ({ asset, onClose, open }: Props) => {
       data_interval_start: dataIntervalStart?.toISOString() ?? null,
       logical_date: logicalDate?.toISOString() ?? null,
       note: dagRunRequestBody.note === "" ? undefined : dagRunRequestBody.note,
-      partition_key: dagRunRequestBody.partitionKey ?? null,
+      partition_key: toNullablePartitionKey(dagRunRequestBody.partitionKey),
     };
 
     materializeAsset({
@@ -172,7 +160,7 @@ export const CreateAssetEventModal = ({ asset, onClose, open }: Props) => {
       requestBody: {
         asset_id: asset.id,
         extra: JSON.parse(extra) as Record<string, unknown>,
-        partition_key: partitionKey ?? null,
+        partition_key: toNullablePartitionKey(partitionKey),
       },
     });
 
@@ -218,7 +206,7 @@ export const CreateAssetEventModal = ({ asset, onClose, open }: Props) => {
           {eventType === "manual" ? (
             <Field.Root mt={6}>
               <Field.Label fontSize="md">{translate("createEvent.manual.extra")}</Field.Label>
-              <JsonEditor onChange={validateAndPrettifyJson} value={extra} />
+              <JsonEditor onChange={setExtra} onError={setExtraError} prettify value={extra} />
               <Text color="fg.error">{extraError}</Text>
             </Field.Root>
           ) : undefined}
@@ -226,7 +214,11 @@ export const CreateAssetEventModal = ({ asset, onClose, open }: Props) => {
             <>
               <Field.Root mt={6}>
                 <Field.Label fontSize="md">{translate("common:dagRun.partitionKey")}</Field.Label>
-                <JsonEditor onChange={setPartitionKey} value={partitionKey} />
+                <Input
+                  onChange={(event) => setPartitionKey(event.target.value)}
+                  size="sm"
+                  value={partitionKey ?? ""}
+                />
               </Field.Root>
               <ErrorAlert error={manualError} />
             </>
