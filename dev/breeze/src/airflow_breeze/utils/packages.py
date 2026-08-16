@@ -34,6 +34,7 @@ from rich.syntax import Syntax
 
 from airflow_breeze.global_constants import (
     ALLOWED_PYTHON_MAJOR_MINOR_VERSIONS,
+    APACHE_AIRFLOW_GITHUB_REPOSITORY,
     DEFAULT_PYTHON_MAJOR_MINOR_VERSION,
     PROVIDER_RUNTIME_DATA_SCHEMA_PATH,
     REGULAR_DOC_PACKAGES,
@@ -810,22 +811,29 @@ def render_template(
     return content
 
 
-def make_sure_remote_apache_exists_and_fetch(github_repository: str = "apache/airflow"):
-    """Make sure that apache remote exist in git.
+def make_sure_remote_apache_exists_and_fetch(github_repository: str = APACHE_AIRFLOW_GITHUB_REPOSITORY):
+    """
+    Make sure that apache remote exists and fetch all tags and branches from it.
 
     We need to take a log from the apache repository main branch - not locally because we might
     not have the latest version. Also, the local repo might be shallow, so we need to
     un-shallow it to see all the history.
 
     This will:
-    * check if the remote exists and add if it does not
+    * check if the remote exists and add/update if it does not point to apache repository
     * check if the local repo is shallow, mark it to un-shallow in this case
-    * fetch from the remote including all tags and overriding local tags in case
+    * fetch from the remote including all tags and branches overriding local tags in case
       they are set differently
 
     """
+    expected_url = f"https://github.com/{APACHE_AIRFLOW_GITHUB_REPOSITORY}.git"
     try:
-        run_command(["git", "remote", "get-url", HTTPS_REMOTE], text=True, capture_output=True)
+        remote_url_result = run_command(
+            ["git", "remote", "get-url", HTTPS_REMOTE], text=True, capture_output=True
+        )
+        current_url = remote_url_result.stdout.strip()
+        if current_url != expected_url:
+            run_command(["git", "remote", "set-url", HTTPS_REMOTE, expected_url], check=True)
     except subprocess.CalledProcessError as ex:
         if ex.returncode == 128 or ex.returncode == 2:
             run_command(
@@ -834,14 +842,14 @@ def make_sure_remote_apache_exists_and_fetch(github_repository: str = "apache/ai
                     "remote",
                     "add",
                     HTTPS_REMOTE,
-                    f"https://github.com/{github_repository}.git",
+                    expected_url,
                 ],
                 check=True,
             )
         else:
             console_print(f"[error]Error {ex}[/]\n[error]When checking if {HTTPS_REMOTE} is set.[/]\n\n")
             sys.exit(1)
-    console_print("[info]Fetching full history and tags from remote.")
+    console_print("[info]Fetching full history, branches and tags from remote.")
     console_print("[info]This might override your local tags!")
     result = run_command(
         ["git", "rev-parse", "--is-shallow-repository"],
@@ -850,7 +858,14 @@ def make_sure_remote_apache_exists_and_fetch(github_repository: str = "apache/ai
         text=True,
     )
     is_shallow_repo = result.stdout.strip() == "true"
-    fetch_command = ["git", "fetch", "--tags", "--force", HTTPS_REMOTE]
+    fetch_command = [
+        "git",
+        "fetch",
+        "--tags",
+        "--force",
+        HTTPS_REMOTE,
+        f"+refs/heads/*:refs/remotes/{HTTPS_REMOTE}/*",
+    ]
     if is_shallow_repo:
         fetch_command.append("--unshallow")
     try:
@@ -858,7 +873,7 @@ def make_sure_remote_apache_exists_and_fetch(github_repository: str = "apache/ai
     except subprocess.CalledProcessError as e:
         console_print(
             f"[error]Error {e}[/]\n"
-            f"[error]When fetching tags from remote. Your tags might not be refreshed.[/]\n\n"
+            f"[error]When fetching tags and branches from remote. Your tags might not be refreshed.[/]\n\n"
             f'[warning]Please refresh the tags manually via:[/]\n\n"'
             f"{' '.join(fetch_command)}\n\n"
         )

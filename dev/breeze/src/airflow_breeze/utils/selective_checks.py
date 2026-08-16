@@ -1897,8 +1897,13 @@ class SelectiveChecks:
         return json.dumps(sorted_providers_to_exclude)
 
     def _is_disabled_integration(self, integration: str) -> bool:
+        is_arm = (
+            self._platform == CI_ARM_PLATFORM
+            or "arm" in str(self._platform).lower()
+            or "arm" in self._github_context_dict.get("workflow", "").lower()
+        )
         return integration in DISABLE_TESTABLE_INTEGRATIONS_FROM_CI or (
-            integration in DISABLE_TESTABLE_INTEGRATIONS_FROM_ARM and self._platform == CI_ARM_PLATFORM
+            integration in DISABLE_TESTABLE_INTEGRATIONS_FROM_ARM and is_arm
         )
 
     @cached_property
